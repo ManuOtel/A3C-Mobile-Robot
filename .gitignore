@@ -1,0 +1,15 @@
+# Environments
+.venv
+venv/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pt
+*.jpg
+dataset/
+dataset2/
+my_runs/
+count.txt
+controller.txt
+
