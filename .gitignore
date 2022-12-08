@@ -9,7 +9,6 @@ __pycache__/
 *.jpg
 dataset/
 dataset2/
-my_runs/
 count.txt
 controller.txt
 
