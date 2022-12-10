@@ -88,52 +88,51 @@ def encoder_setup(vae, weigh_dir, z_dim, print_arch=False):
 # A3C global NN
 class Global_Net(nn.Module):
 
-    def __init__(self, action_dim, z_dim=64, upscale_dim=64, mid1=64*3, mid2=64, mid3=64, n_lstm=0, p=0):
+    def __init__(self, action_dim, z_dim=64, upscale_dim=6, mid1=64*10, mid2=64*5, mid3=64*2, n_lstm=2, p=0.15):
         super(Global_Net, self).__init__()
 
         if upscale_dim>action_dim+1:
             self.upscale_layer = nn.Sequential(
+                nn.BatchNorm1d(6),
                 nn.Linear(6, upscale_dim),
                 nn.BatchNorm1d(upscale_dim),
-                nn.LeakyReLU(inplace=True)
+                nn.LeakyReLU()
             )
             init_layer(self.upscale_layer) 
 
         if n_lstm != 0:
             self.lstm = nn.LSTM(2*z_dim+upscale_dim, mid1, n_lstm, batch_first=True, dropout=p)
-        else:
-            mid1 = 2*z_dim + upscale_dim
-
-        self.before_lstm = nn.Sequential(
+            self.before_lstm = nn.Sequential(
             nn.BatchNorm1d(2*z_dim+upscale_dim),
             nn.LeakyReLU()
-        )
-        init_layer(self.before_lstm) 
-
-        self.after_lstm = nn.Sequential(
-            nn.BatchNorm1d(mid1),
-            nn.LeakyReLU()
-        )
-        init_layer(self.after_lstm) 
+            )
+            init_layer(self.before_lstm) 
+            self.after_lstm = nn.Sequential(
+                nn.BatchNorm1d(mid1),
+                nn.LeakyReLU()
+            )
+            init_layer(self.after_lstm) 
+        else:
+            mid1 = 2*z_dim + upscale_dim
         
         self.first_layer = nn.Sequential(
             nn.Linear(mid1, mid2),
             nn.BatchNorm1d(mid2),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(mid2, mid2),
-            nn.BatchNorm1d(mid2),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(mid2, mid2),
-            nn.BatchNorm1d(mid2),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(mid2, mid2),
-            nn.BatchNorm1d(mid2),
-            nn.LeakyReLU(inplace=True),
-            #nn.Dropout(p=p),
+            nn.LeakyReLU(),
+            # nn.Linear(mid2, mid2),
+            # nn.BatchNorm1d(mid2),
+            # nn.LeakyReLU(),
+            # nn.Linear(mid2, mid2),
+            # nn.BatchNorm1d(mid2),
+            # nn.LeakyReLU(),
+            # nn.Linear(mid2, mid2),
+            # nn.BatchNorm1d(mid2),
+            # nn.LeakyReLU(),
+            nn.Dropout(p=p),
             nn.Linear(mid2, mid3),
             nn.BatchNorm1d(mid3),
-            nn.Tanh(),
-            #nn.Dropout(p=p)
+            nn.LeakyReLU(),
+            nn.Dropout(p=p)
         )
         init_layer(self.first_layer)        
 
@@ -172,10 +171,10 @@ class Global_Net(nn.Module):
         if self.n_lstm!=0:
             x = self.before_lstm(x)
             x, (hx, cx)= self.lstm(x, (hx.detach(), cx.detach()))
+            x = self.after_lstm(x)
         else:
             hx, cx = 0, 0
 
-        x + self.after_lstm(x)
 
         x = self.first_layer(x)                
 
@@ -237,6 +236,7 @@ class Worker(mp.Process):
         self.local_net.to(DEVICE)                
         self.encoder_net = encoder_net
         self.encoder_net.to(DEVICE)
+        self.clip_grad = 0.1
         self.optimizer = opt
         self.gamma = gamma
         
@@ -298,6 +298,8 @@ class Worker(mp.Process):
         loss.backward()
         for lp, gp in zip(self.local_net.parameters(), self.global_net.parameters()):
             gp._grad = lp.grad
+        nn_utils.clip_grad_norm_(self.local_net.parameters(), self.clip_grad)
+        nn_utils.clip_grad_norm_(self.global_net.parameters(), self.clip_grad)
         self.optimizer.step()
 
         self.local_net.load_state_dict(self.global_net.state_dict())
@@ -368,9 +370,10 @@ class Worker(mp.Process):
                             else:
                                 self.ep_spl = 0
                             self.res_queue.put([self.succeed, self.ep_reward, self.ep_spl, self.episode_collides])
-                            tqdm.tqdm.write('E{} - {} | Succ:{} | Coll:{} | SPL:{:.2f} | EpR:{:.2f}'.format(
+                            tqdm.tqdm.write('E{} - {} - {} | Succ:{} | Coll:{} | SPL:{:.2f} | EpR:{:.2f}'.format(
                                 self.g_ep.value,
                                 self.name, 
+                                self.env.max_step,
                                 self.succeed, 
                                 self.episode_collides, 
                                 self.ep_spl, 
@@ -394,18 +397,18 @@ if __name__ == '__main__':
     set_all_seeds(seed=all_random_seed)             # Sets all seeds to certain value
     input_dim = (3, 300, 300)                       # Original image 300x300 -> resize to 256x256
     length_limit = True                            # Not to spawn too close to the target
-    max_step = None                                  # Fix the maximum number of steps per Task
-    automax_step = 100                             # Automatically adjust the maximum number of steps for each task (if not None, the default is True)
+    max_step = 500                                  # Fix the maximum number of steps per Task
+    automax_step = None                             # Automatically adjust the maximum number of steps for each task (if not None, the default is True)
 
 
 #### A2C Hyperparams Setup ####
-    backprop_iter = 1000000                                  # Update training stats every X steps
-    gamma = 0.9                                         # Discount factor for the rewards, range=(0, 1)
-    Per_Slice_Num = 10                               # Calculate the average SR (possibly succes rate) every N Episodes
-    num_Worker = 5                                      # Number of ongoing simulations and A2C agents at the same time
-    max_glob_ep = EP                                    # Global Agent (total step max_step * Agent_Epoch)
+    backprop_iter = 32                                    # Update training stats every X steps
+    gamma = 0.999                                         # Discount factor for the rewards, range=(0, 1)
+    Per_Slice_Num = 10                                    # Calculate the average SR (possibly succes rate) every N Episodes
+    num_Worker = 3                                        # Number of ongoing simulations and A2C agents at the same time
+    max_glob_ep = EP                                      # Global Agent (total step max_step * Agent_Epoch)
     file_save_idx = '{}-Act_Floor303'.format(action_dim)
-    vae_z_dim = 64                                      # VAE sampled latent vector dimensions  
+    vae_z_dim = 64                                        # VAE sampled latent vector dimensions  
 
 
 #### CNN Decoder Model Setup ####
@@ -430,7 +433,7 @@ if __name__ == '__main__':
 
 
 #### Set the optimization algorithm for Shared ADAM ####
-    opt = SharedAdam(global_net.parameters(), lr=7e-4)
+    opt = SharedAdam(global_net.parameters(), lr=1e-4)
     #  \/ Use Value to store data in shared memory (i: signed integer d: double floating point number), Queue stores the output value of the subroutine
     global_ep, res_queue = mp.Value('i', 0), mp.Queue()
     manager = mp.Manager()
@@ -466,7 +469,10 @@ if __name__ == '__main__':
     succeed_list = np.zeros(EP, dtype=np.uint8)
     spl_list = np.zeros(EP)
 
-    log_directory = './my_runs/Navigation/Single_Task/E{}_A{}_LSTM{}'.format(EP, len(action_space), workers[0].local_net.n_lstm, )
+    count = int(open("count.txt", "r").read())
+
+    log_directory = './my_runs/Navigation/Single_Task/E{}_A{}_LSTM{}_C{}'.format(EP, len(action_space), workers[0].local_net.n_lstm, count)
+
     writer = SummaryWriter(log_directory)
     while True:
         succeed, ep_reward, ep_spl, coll = res_queue.get()
@@ -514,7 +520,7 @@ if __name__ == '__main__':
     print('Average reward: {:.2f}'.format(np.average(reward_list)))
     print('Success rate: {:.0f}%'.format(succes_rate*100))
 
-    Save_A3C_model_filename = Save_A3C_model_filename+'sr{:.2f}.pt'.format(succes_rate*100)
+    Save_A3C_model_filename = Save_A3C_model_filename+'sr{:.2f}_C{}.pt'.format(succes_rate*100, count)
 
     # print('ep_reward', ep_rewards)
     # print('ep_reward length ', len(ep_rewards))
@@ -543,6 +549,10 @@ if __name__ == '__main__':
         torch.save(global_net.state_dict(), Save_A3C_model_filename)
 
     print('Saved as: {}'.format(Save_A3C_model_filename))
+
+    count += 1
+
+    open("count.txt", "w").write(str(count))
 
     # plt.show(block=True)
 

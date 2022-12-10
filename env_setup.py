@@ -295,10 +295,10 @@ class ActivateEnv():
 
         #self.event = self.bc.last_event              # current state information (after action)
         
-        if abs(event.metadata['agent']['position']['x'] - self.goal['position']['x']) <= 0.5 and \
-           abs(event.metadata['agent']['position']['z'] - self.goal['position']['z']) <= 0.5 and \
+        if abs(event.metadata['agent']['position']['x'] - self.goal['position']['x']) <= 0 and \
+           abs(event.metadata['agent']['position']['z'] - self.goal['position']['z']) <= 0 and \
            abs(event.metadata['agent']['rotation']['y'] - self.goal['rotation']['y']) == 0 :
-            self.reward = 10 
+            self.reward = 10
             self.succeed = True
             self.done = True
             if self.test_disp_treja == True:
@@ -313,28 +313,24 @@ class ActivateEnv():
 
             if not event.metadata['lastActionSuccess'] and self.ma == True:  
                 self.collided = True
-                #self.reward -= 0.2
-            else:
+                self.reward -= 0.03
+            elif self.ma == True:
                 self.collided = False
 
-            # if self.action == 'MoveAhead' and self.collided==False:
-            #     self.reward += 0.1*self.ma_rec
-            #     if self.last_distance-self.dist > 0:
-            #         self.reward += 0.1
-            # else:
-            # if self.rl_rec>2:
-            #     self.reward -= 0.1*self.rl_rec
+            if self.rl_rec>2:
+                self.reward -= 0.02
 
             # if self.last_distance-self.dist > 0:
             #     self.reward -= 0.01*(self.big_distance-self.dist)
             # if self.last_distance-self.dist < 0:
             #     self.reward += 0.01*(self.big_distance-self.dist)
 
+            self.reward += 0.01 * (self.last_distance - self.dist)
+
             self.last_distance = self.dist
         
         if self.step_count >= self.max_step:
             self.done = True
-            self.reward = -10
             if self.test_disp_treja == True:
                 plt.ion()
                 self.ax0.plot(self.trej_x, self.trej_y, 'ro-')
