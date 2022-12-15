@@ -312,11 +312,11 @@ if __name__ == '__main__':
     # Hyperparameters
     RANDOM_SEED = None
     LEARNING_RATE = 1e-3
-    NUM_EPOCHS = 1000
+    NUM_EPOCHS = 10000
     set_all_seeds(RANDOM_SEED)
-    BATCH_SIZE = 100
+    BATCH_SIZE = 128
 
-    VAE_z_dim = 64
+    VAE_z_dim = 128
     Save_model_name = 'VAE_'+str(VAE_z_dim)+'z'+'_batch'+str(BATCH_SIZE)+'.pt'
 
     # Load Dataset

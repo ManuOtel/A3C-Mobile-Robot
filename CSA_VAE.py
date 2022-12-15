@@ -17,7 +17,7 @@ class Trim(nn.Module):
         super().__init__()
 
     def forward(self, x):
-        return x[:, :, :x.shape[2]-21, :x.shape[3]-21]  # e.g. input 維度 [:,:,129,129], 129=>:128 (0~127共128)
+        return x[:, :, :x.shape[2]-1, :x.shape[3]-1]  # e.g. input 維度 [:,:,129,129], 129=>:128 (0~127共128)
 
 
 class ChannelAttention(nn.Module):
@@ -150,7 +150,7 @@ class VAE(nn.Module):
             # nn.Dropout2d(0.25),
             #
             nn.Flatten(),           # N, 64, H/32, W/32 (N,8,8)展開成只有一層 => N, 8192 (64*8*8)
-            nn.Linear(6400, 512),    # fc
+            nn.Linear(4096, 512),    # fc
             nn.BatchNorm1d(512),
             nn.LeakyReLU(0.1, inplace=True)
         )
@@ -172,10 +172,10 @@ class VAE(nn.Module):
         )
 
         self.decoder = nn.Sequential(
-            nn.Linear(512, 6400),
-            nn.BatchNorm1d(6400),
+            nn.Linear(512, 4096),
+            nn.BatchNorm1d(4096),
             nn.LeakyReLU(0.1, inplace=True),                   # source code就有的一層,需要轉成cnn input shape
-            Reshape(-1, 64, 10, 10),                  # 4096 = 8x8 x 64channel
+            Reshape(-1, 64, 8, 8),                  # 4096 = 8x8 x 64channel
             # Reshape(-1, 64, 4, 4),  # 1024= 4 x 4 x 64
             #
             nn.ConvTranspose2d(64, 64, stride=2, kernel_size=3),
@@ -211,8 +211,9 @@ class VAE(nn.Module):
 
         return z
 
-    def encode_frame(self, cur_obs):
+    def Navigation_forward(self, cur_obs, target_obs):
         cur_z = self.encoding_fn(cur_obs)        # output pre feature map [1, 64]
+        target_z = self.encoding_fn(target_obs)                      # output targe feature map [1, 64]
 
         return cur_z, target_z
 

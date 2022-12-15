@@ -38,11 +38,12 @@ class ActivateEnv():
         self.action_space = action_space
         self.action_dim = len(action_space)
         self.cur_world = 'FloorPlan303'
+        self.dim = 256
         self.bc = Controller(scene=self.cur_world,
                              platform=CloudRendering,
                              snapToGrid=True,
-                             width=300,
-                             height=300,
+                             width=self.dim,
+                             height=self.dim,
                              fieldOfView=90)
         self.bc.step(dict(action='Initialize', gridSize=0.25))
         self.length_limit = length_limit
@@ -67,6 +68,7 @@ class ActivateEnv():
         self.rl_rec = 0
         self.goal_list = ['Desk']
         self.rotations = [0, 45, 90, 135, 180, 225, 270, 315, 360]
+        #self.rotations = [0, 90, 180, 270]
         self.set_goal()
         print('Enviroment succesfuly initiated!')
 
@@ -211,16 +213,17 @@ class ActivateEnv():
 
             # L>=5 True
             if self.length_limit:
-                if (self.optimal_path_length >= 1):
+                if (self.optimal_path_length > 1):
                     break
             else:
-                break
+                if (self.optimal_path_length > 0.5):
+                    break
 
         self.cur_img=torch.from_numpy(event.frame.copy()).float()
         self.target_img=torch.from_numpy(self.goal['frame'].copy()).float()
         #print(self.cur_img)
         gc.collect()
-        return self.cur_img.view(1,3,300,300).cuda(), self.target_img.view(1,3,300,300).cuda(), self.optimal_path_length, self.goal_name
+        return self.cur_img.view(1,3,self.dim,self.dim).cuda(), self.target_img.view(1,3,self.dim,self.dim).cuda(), self.optimal_path_length, self.goal_name
 
     def step(self, idx, save=False):
         global i                           
@@ -242,7 +245,7 @@ class ActivateEnv():
                 self.ma_rec = 0
                 self.rl_rec += 1
             case 'RotateRight90':
-                event = self.bc.step(action='RotateRight')
+                event = self.bc.step(action='RotateRight', degrees=90)
                 self.ma_rec = 0
                 self.rl_rec += 1
             case 'RotateLeft':
@@ -250,7 +253,11 @@ class ActivateEnv():
                 self.ma_rec = 0
                 self.rl_rec += 1
             case 'RotateLeft90':
-                event = self.bc.step(action="RotateLeft")
+                event = self.bc.step(action="RotateLeft", degrees=90)
+                self.ma_rec = 0
+                self.rl_rec += 1
+            case 'RotateBack':
+                event = self.bc.step(action="RotateLeft", degrees=180)
                 self.ma_rec = 0
                 self.rl_rec += 1
 
@@ -295,10 +302,10 @@ class ActivateEnv():
 
         #self.event = self.bc.last_event              # current state information (after action)
         
-        if abs(event.metadata['agent']['position']['x'] - self.goal['position']['x']) <= 0 and \
-           abs(event.metadata['agent']['position']['z'] - self.goal['position']['z']) <= 0 and \
-           abs(event.metadata['agent']['rotation']['y'] - self.goal['rotation']['y']) == 0 :
-            self.reward = 10
+        if abs(event.metadata['agent']['position']['x'] - self.goal['position']['x']) <= 0.5 and \
+           abs(event.metadata['agent']['position']['z'] - self.goal['position']['z']) <= 0.5 and \
+           abs(event.metadata['agent']['rotation']['y'] - self.goal['rotation']['y']) < 45 :
+            self.reward = 1000
             self.succeed = True
             self.done = True
             if self.test_disp_treja == True:
@@ -313,31 +320,35 @@ class ActivateEnv():
 
             if not event.metadata['lastActionSuccess'] and self.ma == True:  
                 self.collided = True
-                self.reward -= 0.03
+                self.reward -= 0.3#*(self.ma_rec**1)
             elif self.ma == True:
                 self.collided = False
+                #self.reward += 0.001
 
             if self.rl_rec>2:
-                self.reward -= 0.02
+                self.reward -= 0.3#*(self.rl_rec**1)
 
-            # if self.last_distance-self.dist > 0:
-            #     self.reward -= 0.01*(self.big_distance-self.dist)
-            # if self.last_distance-self.dist < 0:
-            #     self.reward += 0.01*(self.big_distance-self.dist)
+            self.reward -= 0.05
 
-            self.reward += 0.01 * (self.last_distance - self.dist)
+            if self.last_distance-self.dist > 0:
+                self.reward += 0.1
+            if self.last_distance-self.dist < 0:
+                self.reward -= 0.01#*(self.big_distance-self.dist)
+
+            # self.reward += (self.last_distance - self.dist)*0.1
 
             self.last_distance = self.dist
         
         if self.step_count >= self.max_step:
             self.done = True
+            self.reward = -10
             if self.test_disp_treja == True:
                 plt.ion()
                 self.ax0.plot(self.trej_x, self.trej_y, 'ro-')
                 plt.ioff()
                 plt.pause(0.001)
 
-        return torch.Tensor(event.frame.copy()).view(1,3,300,300).cuda().float(), self.collided, self.reward, self.done, self.succeed
+        return torch.Tensor(event.frame.copy()).view(1,3,self.dim,self.dim).cuda().float(), self.collided, self.reward, self.done, self.succeed
 
     def setup_testing_env(self, _cur_world):
         self.test_disp_treja = True

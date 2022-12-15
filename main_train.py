@@ -10,7 +10,7 @@ import torch.nn.utils as nn_utils
 import torch.multiprocessing as mp
 
 from collections import Counter
-from shared_adam import SharedAdam as SharedAdam
+from shared_adam import SharedAdam2 as SharedAdam
 from CSA_VAE import VAE
 from env_setup import ActivateEnv
 from torch.utils.tensorboard import SummaryWriter
@@ -36,7 +36,7 @@ if not torch.cuda.is_available():
 
 #### INIT AREA ####
 warnings.filterwarnings("ignore")
-action_space = ['RotateRight', 'RotateLeft', 'MoveAhead', 'RotateRight90', 'RotateLeft90']
+action_space = ['RotateBack', 'RotateRight90', 'RotateRight', 'MoveAhead', 'RotateLeft90', 'RotateLeft']
 EP = 10000
 PBAR = tqdm.tqdm(total = EP, desc='Current progress')
 #### INIT AREA ####
@@ -88,15 +88,15 @@ def encoder_setup(vae, weigh_dir, z_dim, print_arch=False):
 # A3C global NN
 class Global_Net(nn.Module):
 
-    def __init__(self, action_dim, z_dim=64, upscale_dim=6, mid1=64*10, mid2=64*5, mid3=64*2, n_lstm=2, p=0.15):
+    def __init__(self, action_dim, z_dim=64, upscale_dim=64, mid1=128, mid2=64, mid3=32, n_lstm=0, p=0):
         super(Global_Net, self).__init__()
 
         if upscale_dim>action_dim+1:
             self.upscale_layer = nn.Sequential(
-                nn.BatchNorm1d(6),
-                nn.Linear(6, upscale_dim),
+                nn.BatchNorm1d(action_dim+1),
+                nn.Linear(action_dim+1, upscale_dim),
                 nn.BatchNorm1d(upscale_dim),
-                nn.LeakyReLU()
+                nn.PReLU()
             )
             init_layer(self.upscale_layer) 
 
@@ -104,12 +104,12 @@ class Global_Net(nn.Module):
             self.lstm = nn.LSTM(2*z_dim+upscale_dim, mid1, n_lstm, batch_first=True, dropout=p)
             self.before_lstm = nn.Sequential(
             nn.BatchNorm1d(2*z_dim+upscale_dim),
-            nn.LeakyReLU()
+            nn.PReLU()
             )
             init_layer(self.before_lstm) 
             self.after_lstm = nn.Sequential(
                 nn.BatchNorm1d(mid1),
-                nn.LeakyReLU()
+                nn.PReLU()
             )
             init_layer(self.after_lstm) 
         else:
@@ -118,21 +118,21 @@ class Global_Net(nn.Module):
         self.first_layer = nn.Sequential(
             nn.Linear(mid1, mid2),
             nn.BatchNorm1d(mid2),
-            nn.LeakyReLU(),
-            # nn.Linear(mid2, mid2),
-            # nn.BatchNorm1d(mid2),
-            # nn.LeakyReLU(),
-            # nn.Linear(mid2, mid2),
-            # nn.BatchNorm1d(mid2),
-            # nn.LeakyReLU(),
-            # nn.Linear(mid2, mid2),
-            # nn.BatchNorm1d(mid2),
-            # nn.LeakyReLU(),
-            nn.Dropout(p=p),
+            nn.PReLU(),
+            nn.Linear(mid2, mid2),
+            nn.BatchNorm1d(mid2),
+            nn.PReLU(),
+            nn.Linear(mid2, mid2),
+            nn.BatchNorm1d(mid2),
+            nn.PReLU(),
+            nn.Linear(mid2, mid2),
+            nn.BatchNorm1d(mid2),
+            nn.PReLU(),
+            #nn.Dropout(p=p),
             nn.Linear(mid2, mid3),
             nn.BatchNorm1d(mid3),
-            nn.LeakyReLU(),
-            nn.Dropout(p=p)
+            nn.PReLU(),
+            #nn.Dropout(p=p)
         )
         init_layer(self.first_layer)        
 
@@ -156,6 +156,7 @@ class Global_Net(nn.Module):
         self.mid1 = mid1
         self.mid2 = mid2
         self.mid3 = mid3
+        self.entropy_coeff=0.01
 
 
     def forward(self, cur_z, target_z, pre_act, hx, cx):
@@ -191,7 +192,11 @@ class Global_Net(nn.Module):
         self.eval()
         logits, _, (hx, cx) = self.forward(cur_z, target_z, pre_act, hx, cx)
         
+        #print(logits)
+
         probs = F.softmax(logits)
+
+        #print(logits)
 
         action = probs.multinomial(1).view(-1)[0].data
 
@@ -270,13 +275,21 @@ class Worker(mp.Process):
         self.memory_cur_z, self.memory_target_z, self.memory_actions, self.memory_pre_actions, self.memory_rewards = [], [], [], [], []
 
     def mem_enchance(self):
-        self.memory_cur_z += self.buffer_cur_z 
-        self.memory_target_z += self.buffer_target_z
-        self.memory_actions += self.buffer_actions 
-        self.memory_pre_actions += self.buffer_pre_actions 
-        self.memory_rewards += self.buffer_rewards
+        self.memory_cur_z = self.buffer_cur_z + self.memory_cur_z
+        self.memory_target_z = self.buffer_target_z + self.memory_target_z
+        self.memory_actions = self.buffer_actions + self.memory_actions
+        self.memory_pre_actions = self.buffer_pre_actions + self.memory_pre_actions
+        self.memory_rewards = self.buffer_rewards + self.memory_rewards
 
     def push_and_pull(self):
+        value = 0
+
+        # self.target_values = np.empty(shape=(0, 0))
+        # for reward in self.memory_rewards[::-1]:
+        #     value = reward + self.gamma * value
+        #     self.target_values = np.append(self.target_values, value)
+        # self.target_values = np.flip(self.target_values)
+
         value = 0
 
         self.target_values = []
@@ -284,6 +297,10 @@ class Worker(mp.Process):
             value = reward + self.gamma * value
             self.target_values.append(value)
         self.target_values.reverse()
+
+        #self.target_values = (self.target_values-self.target_values.mean())/self.target_values.std()
+        
+        self.optimizer.zero_grad()
 
         loss = self.local_net.loss_func(
             torch.vstack(self.memory_cur_z),
@@ -294,12 +311,11 @@ class Worker(mp.Process):
             torch.tensor(self.memory_actions, device=DEVICE),
             torch.tensor(self.target_values, device=DEVICE)[:, None])
 
-        self.optimizer.zero_grad()
         loss.backward()
         for lp, gp in zip(self.local_net.parameters(), self.global_net.parameters()):
             gp._grad = lp.grad
-        nn_utils.clip_grad_norm_(self.local_net.parameters(), self.clip_grad)
-        nn_utils.clip_grad_norm_(self.global_net.parameters(), self.clip_grad)
+        #nn_utils.clip_grad_norm_(self.local_net.parameters(), self.clip_grad)
+        #nn_utils.clip_grad_norm_(self.global_net.parameters(), self.clip_grad)
         self.optimizer.step()
 
         self.local_net.load_state_dict(self.global_net.state_dict())
@@ -345,6 +361,7 @@ class Worker(mp.Process):
                 self.ep_reward += self.step_reward
                 self.pre_action[:, self.action_dim] = int(self.collided)
                 self.episode_collides += int(self.collided)
+                
                 self.memory_actions.append(self.action)
                 self.memory_pre_actions.append(self.pre_action)
                 self.memory_cur_z.append(self.cur_obs)
@@ -395,17 +412,17 @@ if __name__ == '__main__':
     action_dim = len(action_space) 
     all_random_seed = None                          # Seeds value
     set_all_seeds(seed=all_random_seed)             # Sets all seeds to certain value
-    input_dim = (3, 300, 300)                       # Original image 300x300 -> resize to 256x256
-    length_limit = True                            # Not to spawn too close to the target
-    max_step = 500                                  # Fix the maximum number of steps per Task
+    input_dim = (3, 256, 256)                       # Original image 300x300 -> resize to 256x256
+    length_limit = False                            # Not to spawn too close to the target
+    max_step = 512                                  # Fix the maximum number of steps per Task
     automax_step = None                             # Automatically adjust the maximum number of steps for each task (if not None, the default is True)
 
 
 #### A2C Hyperparams Setup ####
-    backprop_iter = 32                                    # Update training stats every X steps
-    gamma = 0.999                                         # Discount factor for the rewards, range=(0, 1)
+    backprop_iter = 64                                    # Update training stats every X steps
+    gamma = 0.9                                           # Discount factor for the rewards, range=(0, 1)
     Per_Slice_Num = 10                                    # Calculate the average SR (possibly succes rate) every N Episodes
-    num_Worker = 3                                        # Number of ongoing simulations and A2C agents at the same time
+    num_Worker = 4                                        # Number of ongoing simulations and A2C agents at the same time
     max_glob_ep = EP                                      # Global Agent (total step max_step * Agent_Epoch)
     file_save_idx = '{}-Act_Floor303'.format(action_dim)
     vae_z_dim = 64                                        # VAE sampled latent vector dimensions  
@@ -413,7 +430,7 @@ if __name__ == '__main__':
 
 #### CNN Decoder Model Setup ####
     vae = True                                                  # Used when importing the image decoder
-    weigh_dir = 'VAE_64z_batch100.pt'            # SA_CA_VAE 4scene recon xt (not sure if this is right weight)
+    weigh_dir = 'VAE_64z_batch128.pt'            # SA_CA_VAE 4scene recon xt (not sure if this is right weight)
 
     encoder_net, model_filename = encoder_setup(vae, weigh_dir, vae_z_dim)  # VAE or traditional CNN Encoder
     print('CNN decoder loaded -> {}-{}'.format(model_filename, input_dim[1]))
@@ -433,7 +450,7 @@ if __name__ == '__main__':
 
 
 #### Set the optimization algorithm for Shared ADAM ####
-    opt = SharedAdam(global_net.parameters(), lr=1e-4)
+    opt = SharedAdam(global_net.parameters(), lr=1e-5)
     #  \/ Use Value to store data in shared memory (i: signed integer d: double floating point number), Queue stores the output value of the subroutine
     global_ep, res_queue = mp.Value('i', 0), mp.Queue()
     manager = mp.Manager()
