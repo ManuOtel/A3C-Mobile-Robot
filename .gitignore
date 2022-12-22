@@ -1,14 +1,20 @@
 # Environments
 .venv
 venv/
-# Byte-compiled / optimized / DLL files
+# Python Cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.pt
-*.jpg
+# Models
+a3c_models/
+vae_models/
+temp_vae_models/
+#Data sets
 dataset/
 dataset2/
-count.txt
-controller.txt
+dataset3/
+#Figures
+*.pt
+*.jpg
+temp_figures/
 

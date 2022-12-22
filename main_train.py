@@ -88,7 +88,7 @@ def encoder_setup(vae, weigh_dir, z_dim, print_arch=False):
 # A3C global NN
 class Global_Net(nn.Module):
 
-    def __init__(self, action_dim, z_dim=64, upscale_dim=64, mid1=128, mid2=64, mid3=32, n_lstm=0, p=0):
+    def __init__(self, action_dim, z_dim=64, upscale_dim=64, mid1=256, mid2=128, mid3=64, n_lstm=2, p=0):
         super(Global_Net, self).__init__()
 
         if upscale_dim>action_dim+1:

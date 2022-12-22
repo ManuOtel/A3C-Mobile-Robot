@@ -1,5 +1,5 @@
 #### IMPORTS AREA ####
-import torch, os, gc, cv2, time, random
+import torch, os, gc, cv2, time, random, warnings
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,6 +15,7 @@ from CSA_VAE import VAE
 
 import matplotlib
 matplotlib.use( 'tkagg')
+warnings.filterwarnings("ignore")
 #### IMPORTS AREA ####
 
 torch.cuda.empty_cache()
@@ -32,7 +33,7 @@ def tensor_to_RGB(tensor):
 
 # Load my Dataset
 class Dataset(Dataset):
-    def __init__(self, img_dir = './dataset2/'):
+    def __init__(self, img_dir = './dataset3/'):
 
         self.img_path = []
         for i in os.listdir(img_dir):
@@ -203,6 +204,10 @@ def train_vae_v1(num_epochs, model, optimizer, device, train_loader, loss_fn=Non
               % (epoch + 1, num_epochs, batch_idx + 1,
                  len(train_loader), loss, pixelwise, kl_div))
 
+        if epoch%100==0:
+            torch.save(model.state_dict(), 'temp_vae_models/temp_model_e{}_l{}.pt'.format(epoch, loss))
+
+
         if not skip_epoch_stats:
             model.eval()
 
@@ -224,9 +229,7 @@ def train_vae_v1(num_epochs, model, optimizer, device, train_loader, loss_fn=Non
     return log_dict
 
 
-def plot_generated_images(data_loader, model, device,
-                          unnormalizer=None,
-                          figsize=(20, 2.5), n_images=10, modeltype='autoencoder'):
+def plot_generated_images(data_loader, model, device, unnormalizer=None, figsize=(20, 2.5), n_images=10, modeltype='autoencoder'):
     fig, axes = plt.subplots(nrows=2, ncols=n_images,
                              sharex=True, sharey=True, figsize=figsize)
 
@@ -316,17 +319,18 @@ if __name__ == '__main__':
     set_all_seeds(RANDOM_SEED)
     BATCH_SIZE = 128
 
-    VAE_z_dim = 128
-    Save_model_name = 'VAE_'+str(VAE_z_dim)+'z'+'_batch'+str(BATCH_SIZE)+'.pt'
+    VAE_z_dim = 64
+    Save_model_name = 'vae_models/VAE_'+str(VAE_z_dim)+'z'+'_batch'+str(BATCH_SIZE)+'.pt'
 
     # Load Dataset
 
-    PATH_to_log_dir = './my_runs/VAE_recon4-256x256_batch256'
+    PATH_to_log_dir = './my_runs/VAE-z{}b{}lr{}'.format(VAE_z_dim, BATCH_SIZE, LEARNING_RATE)
     writer = SummaryWriter(PATH_to_log_dir)
 
     train_loader = torch.utils.data.DataLoader(dataset=Dataset(),  # torch TensorDataset format
                                                batch_size=BATCH_SIZE,  # mini batch size
-                                               shuffle=True)
+                                               shuffle=True,
+                                               num_workers=14)
     
     model = VAE(VAE_z_dim)
     model.to(DEVICE)

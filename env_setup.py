@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 from ai2thor.controller import Controller
 from ai2thor.platform import CloudRendering
-from ai2thor.util.metrics import get_shortest_path_to_object_type, path_distance, vector_distance
+from ai2thor.util.metrics import get_shortest_path_to_object_type, path_distance, vector_distance, get_shortest_path_to_point
 from matplotlib.pyplot import MultipleLocator
 from gym import spaces
 from PIL import Image, ImageDraw, ImageFont
@@ -37,10 +37,10 @@ class ActivateEnv():
     def __init__(self, action_space, length_limit=False, max_step=None, automax_step=None):
         self.action_space = action_space
         self.action_dim = len(action_space)
-        self.cur_world = 'FloorPlan303'
+        self.cur_world = 'FloorPlan203'
         self.dim = 256
         self.bc = Controller(scene=self.cur_world,
-                             platform=CloudRendering,
+                             # platform=CloudRendering,
                              snapToGrid=True,
                              width=self.dim,
                              height=self.dim,
@@ -55,6 +55,7 @@ class ActivateEnv():
         self.trej_x = []
         self.trej_y = []
         self.reward = 0
+        self.col_rec = 0
         self.done = False
         self.collided = False
         self.succeed = False
@@ -66,7 +67,7 @@ class ActivateEnv():
         self.action = self.action_space[0]
         self.ma_rec = 0 
         self.rl_rec = 0
-        self.goal_list = ['Desk']
+        self.goal_list = ['Television']
         self.rotations = [0, 45, 90, 135, 180, 225, 270, 315, 360]
         #self.rotations = [0, 90, 180, 270]
         self.set_goal()
@@ -165,6 +166,8 @@ class ActivateEnv():
                     horizon=0,
                     standing=True
                 )
+        #get_shortest_path_to_point
+        self.bc.step(action='RotateLeft', degrees=90)
         self.bc.step(action="MoveAhead")
         ev = self.bc.step(action='RotateRight', degrees=180)
         self.goal['frame']=ev.frame
@@ -191,6 +194,7 @@ class ActivateEnv():
 
         while True:
             position = random.choice(self.reach_pos.metadata['actionReturn'])
+            #print(position)
             rotation = random.choice(self.rotations)
             self.bc.step(action="Teleport",
                           position=position,
@@ -198,11 +202,15 @@ class ActivateEnv():
                           horizon=0,
                           standing=True)
 
+            # event = self.bc.step(action="GetShortestPathToPoint",
+            #                           position=position,
+            #                           x=self.goal['position']["x"],
+            #                           y=self.goal['position']["y"],
+            #                           z=self.goal['position']["z"])
             event = self.bc.step(action="GetShortestPathToPoint",
-                                      position=position,
-                                      x=self.goal['position']["x"],
-                                      y=self.goal['position']["y"],
-                                      z=self.goal['position']["z"],)
+                                position=position,
+                                target=self.goal['position'])
+
 
             self.optimal_path = event.metadata["actionReturn"]['corners']
             self.optimal_path_length = path_distance(self.optimal_path)
@@ -244,6 +252,7 @@ class ActivateEnv():
                 event = self.bc.step(action="RotateRight", degrees=45)
                 self.ma_rec = 0
                 self.rl_rec += 1
+                self.reward -= 0.1
             case 'RotateRight90':
                 event = self.bc.step(action='RotateRight', degrees=90)
                 self.ma_rec = 0
@@ -252,6 +261,7 @@ class ActivateEnv():
                 event = self.bc.step(action="RotateLeft", degrees=45)
                 self.ma_rec = 0
                 self.rl_rec += 1
+                self.reward -= 0.1
             case 'RotateLeft90':
                 event = self.bc.step(action="RotateLeft", degrees=90)
                 self.ma_rec = 0
@@ -320,20 +330,22 @@ class ActivateEnv():
 
             if not event.metadata['lastActionSuccess'] and self.ma == True:  
                 self.collided = True
-                self.reward -= 0.3#*(self.ma_rec**1)
+                self.col_rec += 1
+                self.reward -= 0.3*self.col_rec
             elif self.ma == True:
+                self.col_rec = 0
                 self.collided = False
                 #self.reward += 0.001
 
             if self.rl_rec>2:
-                self.reward -= 0.3#*(self.rl_rec**1)
+                self.reward -= 0.3*self.rl_rec
 
             self.reward -= 0.05
 
             if self.last_distance-self.dist > 0:
                 self.reward += 0.1
             if self.last_distance-self.dist < 0:
-                self.reward -= 0.01#*(self.big_distance-self.dist)
+                self.reward -= 0.1#*(self.big_distance-self.dist)
 
             # self.reward += (self.last_distance - self.dist)*0.1
 
