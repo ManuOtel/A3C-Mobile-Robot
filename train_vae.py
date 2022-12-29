@@ -33,7 +33,7 @@ def tensor_to_RGB(tensor):
 
 # Load my Dataset
 class Dataset(Dataset):
-    def __init__(self, img_dir = './dataset3/'):
+    def __init__(self, img_dir = './dataset5/'):
 
         self.img_path = []
         for i in os.listdir(img_dir):
@@ -140,6 +140,7 @@ def train_vae_v1(num_epochs, model, optimizer, device, train_loader, loss_fn=Non
                 'train_kl_loss_per_batch': []}
     if loss_fn is None:
         loss_fn = F.mse_loss
+        #loss_fn = F.cross_entropy
 
     start_time = time.time()
     record_batch_cnt = 0

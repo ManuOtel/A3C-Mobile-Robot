@@ -88,28 +88,36 @@ def encoder_setup(vae, weigh_dir, z_dim, print_arch=False):
 # A3C global NN
 class Global_Net(nn.Module):
 
-    def __init__(self, action_dim, z_dim=64, upscale_dim=64, mid1=256, mid2=128, mid3=64, n_lstm=2, p=0):
+    def __init__(self, action_dim, z_dim=64, upscale_dim=8, mid1=256, mid2=128, mid3=64, n_lstm=2, p=0):
         super(Global_Net, self).__init__()
 
         if upscale_dim>action_dim+1:
             self.upscale_layer = nn.Sequential(
-                nn.BatchNorm1d(action_dim+1),
-                nn.Linear(action_dim+1, upscale_dim),
-                nn.BatchNorm1d(upscale_dim),
-                nn.PReLU()
+                #nn.BatchNorm1d(action_dim+1),
+                nn.Linear(action_dim+1, 2*upscale_dim),
+                #nn.BatchNorm1d(2*upscale_dim),
+                nn.ReLU6(),
+                nn.Linear(2*upscale_dim, 2*upscale_dim),
+                #nn.BatchNorm1d(2*upscale_dim),
+                nn.ReLU6(),
+                nn.Linear(2*upscale_dim, upscale_dim),
+                #nn.BatchNorm1d(upscale_dim),
+                nn.ReLU6(),
             )
             init_layer(self.upscale_layer) 
+        else:
+            upscale_dim = action_dim+1
 
         if n_lstm != 0:
             self.lstm = nn.LSTM(2*z_dim+upscale_dim, mid1, n_lstm, batch_first=True, dropout=p)
             self.before_lstm = nn.Sequential(
             nn.BatchNorm1d(2*z_dim+upscale_dim),
-            nn.PReLU()
+            nn.ReLU6()
             )
             init_layer(self.before_lstm) 
             self.after_lstm = nn.Sequential(
                 nn.BatchNorm1d(mid1),
-                nn.PReLU()
+                nn.ReLU6()
             )
             init_layer(self.after_lstm) 
         else:
@@ -117,21 +125,21 @@ class Global_Net(nn.Module):
         
         self.first_layer = nn.Sequential(
             nn.Linear(mid1, mid2),
-            nn.BatchNorm1d(mid2),
-            nn.PReLU(),
-            nn.Linear(mid2, mid2),
-            nn.BatchNorm1d(mid2),
-            nn.PReLU(),
-            nn.Linear(mid2, mid2),
-            nn.BatchNorm1d(mid2),
-            nn.PReLU(),
-            nn.Linear(mid2, mid2),
-            nn.BatchNorm1d(mid2),
-            nn.PReLU(),
+            #nn.BatchNorm1d(mid2),
+            nn.ReLU6(),
             #nn.Dropout(p=p),
+            # nn.Linear(mid2, mid3),
+            # nn.BatchNorm1d(mid3),
+            # nn.ReLU6(),
+            # nn.Linear(mid3, mid3*2),
+            # nn.BatchNorm1d(mid3*2),
+            # nn.ReLU6(),
+            # nn.Linear(mid3*2, mid3),
+            # nn.BatchNorm1d(mid3),
+            # nn.ReLU6(),
             nn.Linear(mid2, mid3),
-            nn.BatchNorm1d(mid3),
-            nn.PReLU(),
+            #nn.BatchNorm1d(mid3),
+            nn.ReLU6(),
             #nn.Dropout(p=p)
         )
         init_layer(self.first_layer)        
@@ -170,9 +178,9 @@ class Global_Net(nn.Module):
         x = torch.cat((x, act_map), 1)
 
         if self.n_lstm!=0:
-            x = self.before_lstm(x)
+            #x = self.before_lstm(x)
             x, (hx, cx)= self.lstm(x, (hx.detach(), cx.detach()))
-            x = self.after_lstm(x)
+            #x = self.after_lstm(x)
         else:
             hx, cx = 0, 0
 
@@ -332,6 +340,8 @@ class Worker(mp.Process):
 
 
         while self.g_ep.value < self.max_glob_ep:
+            if self.g_ep.value % 100 == 0:
+                torch.save(self.global_net.state_dict(), './temp_a3c_models/temp_a3c_model_E{}'.format(self.g_ep.value))
             self.episode_steps = 1
             self.ep_reward = 0.
             self.episode_collides = 0
@@ -371,30 +381,32 @@ class Worker(mp.Process):
                 #self.cur_obs_ = torch.nn.functional.interpolate(new_obs, size=self.input_dim).view(1,3,256,256).to(DEVICE)
                 
                 if self.episode_steps % self.backprop_iter == 0 or self.done:
-                    if len(self.memory_rewards)>2:
-                        self.push_and_pull()
-                        self.mem_clean()
-                    else:
-                        self.mem_enchance()
-                        self.push_and_pull()
-                        self.mem_clean()
+                    # if len(self.memory_rewards)>0:
+                    self.push_and_pull()
+                    self.mem_clean()
+                    # else:
+                    #     self.mem_enchance()
+                    #     self.push_and_pull()
+                    #     self.mem_clean()
                     if self.done:
+                        #self.mem_clean()
                         self.lock.acquire()
                         with self.g_ep.get_lock():
                             PBAR.n = self.g_ep.value
                             if self.succeed:
-                                self.ep_spl = self.shortest_len/max(self.episode_steps, self.shortest_len)
+                                self.ep_spl = self.shortest_len/max(self.episode_steps*0.125, self.shortest_len)
                             else:
                                 self.ep_spl = 0
                             self.res_queue.put([self.succeed, self.ep_reward, self.ep_spl, self.episode_collides])
-                            tqdm.tqdm.write('E{} - {} - {} | Succ:{} | Coll:{} | SPL:{:.2f} | EpR:{:.2f}'.format(
+                            tqdm.tqdm.write('E{} - {} - {} | Succ:{} | Coll:{} | SPL:{:.2f} | EpR:{:.2f} | Target:{}'.format(
                                 self.g_ep.value,
                                 self.name, 
                                 self.env.max_step,
                                 self.succeed, 
                                 self.episode_collides, 
                                 self.ep_spl, 
-                                self.ep_reward))
+                                self.ep_reward,
+                                self.env.goal_name))
                             self.g_ep.value += 1
                             torch.cuda.empty_cache()
                             gc.collect()
@@ -413,13 +425,13 @@ if __name__ == '__main__':
     all_random_seed = None                          # Seeds value
     set_all_seeds(seed=all_random_seed)             # Sets all seeds to certain value
     input_dim = (3, 256, 256)                       # Original image 300x300 -> resize to 256x256
-    length_limit = False                            # Not to spawn too close to the target
-    max_step = 512                                  # Fix the maximum number of steps per Task
+    length_limit = True                            # Not to spawn too close to the target
+    max_step = 500                                   # Fix the maximum number of steps per Task
     automax_step = None                             # Automatically adjust the maximum number of steps for each task (if not None, the default is True)
 
 
 #### A2C Hyperparams Setup ####
-    backprop_iter = 64                                    # Update training stats every X steps
+    backprop_iter = 10                                    # Update training stats every X steps
     gamma = 0.9                                           # Discount factor for the rewards, range=(0, 1)
     Per_Slice_Num = 10                                    # Calculate the average SR (possibly succes rate) every N Episodes
     num_Worker = 4                                        # Number of ongoing simulations and A2C agents at the same time
@@ -430,7 +442,7 @@ if __name__ == '__main__':
 
 #### CNN Decoder Model Setup ####
     vae = True                                                  # Used when importing the image decoder
-    weigh_dir = 'VAE_64z_batch128.pt'            # SA_CA_VAE 4scene recon xt (not sure if this is right weight)
+    weigh_dir = './vae_models/VAE_B128_L1000.pt'            # SA_CA_VAE 4scene recon xt (not sure if this is right weight)
 
     encoder_net, model_filename = encoder_setup(vae, weigh_dir, vae_z_dim)  # VAE or traditional CNN Encoder
     print('CNN decoder loaded -> {}-{}'.format(model_filename, input_dim[1]))
@@ -450,7 +462,7 @@ if __name__ == '__main__':
 
 
 #### Set the optimization algorithm for Shared ADAM ####
-    opt = SharedAdam(global_net.parameters(), lr=1e-5)
+    opt = SharedAdam(global_net.parameters(), lr=1e-4)
     #  \/ Use Value to store data in shared memory (i: signed integer d: double floating point number), Queue stores the output value of the subroutine
     global_ep, res_queue = mp.Value('i', 0), mp.Queue()
     manager = mp.Manager()
@@ -537,7 +549,7 @@ if __name__ == '__main__':
     print('Average reward: {:.2f}'.format(np.average(reward_list)))
     print('Success rate: {:.0f}%'.format(succes_rate*100))
 
-    Save_A3C_model_filename = Save_A3C_model_filename+'sr{:.2f}_C{}.pt'.format(succes_rate*100, count)
+    Save_A3C_model_filename = 'a3c_models/'+Save_A3C_model_filename+'sr{:.2f}_C{}.pt'.format(succes_rate*100, count)
 
     # print('ep_reward', ep_rewards)
     # print('ep_reward length ', len(ep_rewards))

@@ -14,7 +14,6 @@ dataset/
 dataset2/
 dataset3/
 #Figures
-*.pt
 *.jpg
 temp_figures/
 

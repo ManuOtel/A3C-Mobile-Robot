@@ -117,28 +117,28 @@ class VAE(nn.Module):
             SA(32),
             # CBAM(32),
             nn.BatchNorm2d(32),                 # output shape same as input
-            nn.LeakyReLU(0.1, inplace=True),    # output shape same as input
+            nn.PReLU(),                         # output shape same as input
             nn.Dropout2d(0.25),                 # output shape same as input ,隨機將整個通道歸零 通道是2D特徵圖 使用伯努利分佈的取樣，每個通道將在每次呼叫forward中以概率p獨立清零。
             #
             nn.Conv2d(32, 64, stride=2, kernel_size=3, bias=False, padding=1),  # output N, 64, H/4, W/4
             # add attention
             # CBAM(64),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             nn.Dropout2d(0.25),
             #
             nn.Conv2d(64, 64, stride=2, kernel_size=3, bias=False, padding=1),  # output N, 64, H/8, W/8
             # add attention
             # CBAM(64),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             nn.Dropout2d(0.25),
             #
             nn.Conv2d(64, 64, stride=2, kernel_size=3, bias=False, padding=1),  # output N, 64, H/16, W/16
             # add attention
             # CBAM(64),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             nn.Dropout2d(0.25),
             #
             nn.Conv2d(64, 64, stride=2, kernel_size=3, bias=False, padding=1),  # output N,64, H/32, W/32
@@ -146,56 +146,56 @@ class VAE(nn.Module):
             CA(64),
             # CBAM(64),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             # nn.Dropout2d(0.25),
             #
             nn.Flatten(),           # N, 64, H/32, W/32 (N,8,8)展開成只有一層 => N, 8192 (64*8*8)
             nn.Linear(4096, 512),    # fc
             nn.BatchNorm1d(512),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.PReLU()
         )
 
         self.z_mean = nn.Sequential(
             nn.Linear(512, self.z_dim),
-            nn.BatchNorm1d(self.z_dim),
-            nn.ReLU6(inplace=True)
+            #nn.BatchNorm1d(self.z_dim),
+            #nn.ReLU6()
         ) # Mean: 200 node
         self.z_log_var = nn.Sequential(
-            nn.Linear(512, self.z_dim),  # var:  200 node
-            nn.BatchNorm1d(self.z_dim),
-            nn.ReLU6(inplace=True)
+            nn.Linear(512, self.z_dim),
+            #nn.BatchNorm1d(self.z_dim),
+            #nn.ReLU6()
         )
         self.z_fmap = nn.Sequential(
             nn.Linear(self.z_dim, 512),    # code to feature map
             nn.BatchNorm1d(512),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.PReLU()
         )
 
         self.decoder = nn.Sequential(
             nn.Linear(512, 4096),
             nn.BatchNorm1d(4096),
-            nn.LeakyReLU(0.1, inplace=True),                   # source code就有的一層,需要轉成cnn input shape
+            nn.PReLU(),                   # source code就有的一層,需要轉成cnn input shape
             Reshape(-1, 64, 8, 8),                  # 4096 = 8x8 x 64channel
             # Reshape(-1, 64, 4, 4),  # 1024= 4 x 4 x 64
             #
             nn.ConvTranspose2d(64, 64, stride=2, kernel_size=3),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             nn.Dropout2d(0.25),
             #
             nn.ConvTranspose2d(64, 64, stride=2, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             nn.Dropout2d(0.25),
             #
             nn.ConvTranspose2d(64, 64, stride=2, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             nn.Dropout2d(0.25),
             #
             nn.ConvTranspose2d(64, 32, stride=2, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.PReLU(),
             nn.Dropout2d(0.25),
             #
             nn.ConvTranspose2d(32, 3, stride=2, kernel_size=3, padding=1),
@@ -218,7 +218,10 @@ class VAE(nn.Module):
         return cur_z, target_z
 
     def reparameterize(self, z_mu, z_log_var):      # 重新random 取參數作為noise ,在乘上 exp 加總 ->code with noise
-        z = z_mu * torch.exp(z_log_var / 2.)  # z_log_var表示 log(variance) 同log(sigma^2),所以 exp(log(var) / 2) 等於std
+        eps = torch.randn(z_mu.size(0), z_mu.size(1)).to(z_mu.get_device())   # gpu
+        # eps = torch.randn(z_mu.size(0), z_mu.size(1))                       # cpu
+        z = z_mu + eps * torch.exp(z_log_var / 2.)
+        #z = z_mu * torch.exp(z_log_var / 2.)  # z_log_var表示 log(variance) 同log(sigma^2),所以 exp(log(var) / 2) 等於std
         return z
 
     def forward(self, x):   # train VAE用

@@ -37,11 +37,11 @@ class ActivateEnv():
     def __init__(self, action_space, length_limit=False, max_step=None, automax_step=None):
         self.action_space = action_space
         self.action_dim = len(action_space)
-        self.cur_world = 'FloorPlan203'
+        self.cur_world = 'FloorPlan303'
         self.dim = 256
         self.bc = Controller(scene=self.cur_world,
-                             # platform=CloudRendering,
-                             snapToGrid=True,
+                             #platform=CloudRendering,
+                             snapToGrid=False,
                              width=self.dim,
                              height=self.dim,
                              fieldOfView=90)
@@ -67,7 +67,8 @@ class ActivateEnv():
         self.action = self.action_space[0]
         self.ma_rec = 0 
         self.rl_rec = 0
-        self.goal_list = ['Television']
+        self.goal_list = ['Desk', 'ShelvingUnit', 'Window', 'Mirror']
+        self.goal_angels = {'Desk':90, 'ShelvingUnit':180, 'Window':180, 'Mirror':0}
         self.rotations = [0, 45, 90, 135, 180, 225, 270, 315, 360]
         #self.rotations = [0, 90, 180, 270]
         self.set_goal()
@@ -130,6 +131,7 @@ class ActivateEnv():
 
     def set_goal(self):
         self.goal_name = random.choice(self.goal_list)
+        self.goal_angle = self.goal_angels[self.goal_name]
         self.reach_pos = self.bc.step(dict(action='GetReachablePositions'))
 
         for obj2 in self.reach_pos.metadata["objects"]:
@@ -167,9 +169,9 @@ class ActivateEnv():
                     standing=True
                 )
         #get_shortest_path_to_point
-        self.bc.step(action='RotateLeft', degrees=90)
-        self.bc.step(action="MoveAhead")
-        ev = self.bc.step(action='RotateRight', degrees=180)
+        #self.bc.step(action='RotateLeft', degrees=90)
+        #self.bc.step(action="MoveAhead")
+        ev = self.bc.step(action='RotateLeft', degrees=self.goal_angle)
         self.goal['frame']=ev.frame
         self.goal['position']=ev.metadata['agent']['position']
         self.goal['rotation']=ev.metadata['agent']['rotation']
@@ -183,12 +185,10 @@ class ActivateEnv():
         self.last_distance = 0
         self.step_count = 0
         self.event = self.bc.reset()    
-
+        self.set_goal()
         self.reset_num += 1
         self.frame = 0
         self.reward = 0
-
-        self.set_goal()
 
         #self.bc.start_search(scene=self._cur_world)
 
@@ -201,6 +201,7 @@ class ActivateEnv():
                           rotation=dict(x=0, y=rotation, z=0),
                           horizon=0,
                           standing=True)
+            #self.bc.step('Pass')
 
             # event = self.bc.step(action="GetShortestPathToPoint",
             #                           position=position,
@@ -211,20 +212,23 @@ class ActivateEnv():
                                 position=position,
                                 target=self.goal['position'])
 
-
-            self.optimal_path = event.metadata["actionReturn"]['corners']
-            self.optimal_path_length = path_distance(self.optimal_path)
+            self.reward = 0
+            try:
+                self.optimal_path = event.metadata["actionReturn"]['corners']
+                self.optimal_path_length = path_distance(self.optimal_path)
+            except:
+                self.reward = -1
 
             # Self Adjust MAX Step
             if self.automax_step is not None:
                 self.max_step = int(self.optimal_path_length * self.automax_step)
 
             # L>=5 True
-            if self.length_limit:
+            if self.length_limit and self.reward==0:
                 if (self.optimal_path_length > 1):
                     break
             else:
-                if (self.optimal_path_length > 0.5):
+                if abs(event.metadata['agent']['rotation']['y'] - self.goal['rotation']['y']) > 45 and (self.optimal_path_length > 0.5) and self.reward==0:
                     break
 
         self.cur_img=torch.from_numpy(event.frame.copy()).float()
@@ -245,29 +249,35 @@ class ActivateEnv():
         match self.action:
             case 'MoveAhead':
                 event = self.bc.step(action=self.action)
+                #self.bc.step('Pass')
                 self.ma = True
                 self.ma_rec += 1 
                 self.rl_rec = 0
             case 'RotateRight':
                 event = self.bc.step(action="RotateRight", degrees=45)
+                #event = self.bc.step('Pass')
                 self.ma_rec = 0
                 self.rl_rec += 1
-                self.reward -= 0.1
+                #self.reward -= 0.1
             case 'RotateRight90':
                 event = self.bc.step(action='RotateRight', degrees=90)
+                #self.bc.step('Pass')
                 self.ma_rec = 0
                 self.rl_rec += 1
             case 'RotateLeft':
                 event = self.bc.step(action="RotateLeft", degrees=45)
+                #self.bc.step('Pass')
                 self.ma_rec = 0
                 self.rl_rec += 1
-                self.reward -= 0.1
+                #self.reward -= 0.1
             case 'RotateLeft90':
                 event = self.bc.step(action="RotateLeft", degrees=90)
+                #self.bc.step('Pass')
                 self.ma_rec = 0
                 self.rl_rec += 1
             case 'RotateBack':
                 event = self.bc.step(action="RotateLeft", degrees=180)
+                #self.bc.step('Pass')
                 self.ma_rec = 0
                 self.rl_rec += 1
 
@@ -331,21 +341,21 @@ class ActivateEnv():
             if not event.metadata['lastActionSuccess'] and self.ma == True:  
                 self.collided = True
                 self.col_rec += 1
-                self.reward -= 0.3*self.col_rec
+                self.reward -= 0.03*self.col_rec
             elif self.ma == True:
                 self.col_rec = 0
                 self.collided = False
-                #self.reward += 0.001
+                self.reward += 0.01
 
-            if self.rl_rec>2:
-                self.reward -= 0.3*self.rl_rec
+            if self.rl_rec>1:
+                self.reward -= 0.03*self.rl_rec
 
-            self.reward -= 0.05
+            self.reward -= 0.01
 
             if self.last_distance-self.dist > 0:
-                self.reward += 0.1
+                self.reward += 0.01
             if self.last_distance-self.dist < 0:
-                self.reward -= 0.1#*(self.big_distance-self.dist)
+                self.reward -= 0.01#*(self.big_distance-self.dist)
 
             # self.reward += (self.last_distance - self.dist)*0.1
 
@@ -353,7 +363,7 @@ class ActivateEnv():
         
         if self.step_count >= self.max_step:
             self.done = True
-            self.reward = -10
+            self.reward = -90
             if self.test_disp_treja == True:
                 plt.ion()
                 self.ax0.plot(self.trej_x, self.trej_y, 'ro-')
